@@ -93,76 +93,161 @@ Schermata Principale<br/>
 <img src="https://i.imgur.com/mkm3dCm.jpg" height="80%" width="40%" alt="Schermata App"/>
 <br /><br />
 
-## Struttura del progetto - Weather Report
-L’app Weather Report è strutturata secondo i principi della Clean Architecture, garantendo modularità, testabilità e una chiara separazione delle responsabilità. Il codice è organizzato in pacchetti distinti per ogni livello architetturale.
-
-## 📂 Strati dell'architettura
-
-<img src="https://i.imgur.com/7cWGLGe.png" height="80%" width="40%" alt="Schermata App"/>
-<br /><br />
+## Location Tracker
 
 ```kotlin
-@Composable
-fun CameraPreview(
-    modifier: Modifier = Modifier,
-    viewModel: MainViewmodel,
-    controller: LifecycleCameraController
-) {
-    val torchState by viewModel.torchState.collectAsState()
-    var tapPosition by remember { mutableStateOf<Offset?>(null) }
+class DefaultLocationTracker @Inject constructor(
+    private val locationClient: FusedLocationProviderClient,
+    private val application: Application
+): LocationTracker {
+    override suspend fun getCurrentLocation(): Location? {
+        val hasAccessFineLocationPermission = ContextCompat.checkSelfPermission(
+            application,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasAccessCoarseLocationPermission = ContextCompat.checkSelfPermission(
+            application,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
 
-    Box(modifier = modifier.fillMaxSize()) {
-        AndroidView(factory = {
-            PreviewView(it).apply {
-                this.controller = controller
 
-                this.setOnTouchListener { view, event ->
-                    if (event.action == MotionEvent.ACTION_DOWN) {
-                        val factory = this.meteringPointFactory
-                        val meteringPoint = factory.createPoint(event.x, event.y)
-                        val action = FocusMeteringAction.Builder(meteringPoint).build()
-                        this.controller?.cameraControl?.startFocusAndMetering(action)
+        val locationManager = application.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val isGpsEnabled = locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ||
+                locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
 
-                        val viewLocation = IntArray(2)
-                        view.getLocationOnScreen(viewLocation)
-                        val adjustedX = event.rawX - viewLocation[0]
-                        val adjustedY = event.rawY - viewLocation[1]
-                        tapPosition = Offset(adjustedX, adjustedY)
-                    }
-                    true
-                }
-            }
-        }, modifier = Modifier.fillMaxSize())
-
-        tapPosition?.let { position ->
-            FocusIndicator(position)
+        if(!hasAccessFineLocationPermission || !hasAccessCoarseLocationPermission || !isGpsEnabled){
+            return null
         }
 
-        if (torchState) {
-            controller.enableTorch(true)
-        } else {
-            controller.enableTorch(false)
+        return suspendCancellableCoroutine { cont ->
+            locationClient.lastLocation.apply {
+                if(isComplete){
+                    if(isSuccessful){
+                        cont.resume(result)
+                    }
+                    else{
+                        cont.resume(null)
+                    }
+                    return@suspendCancellableCoroutine
+                }
+                addOnSuccessListener {
+                    cont.resume(it)
+                }
+                addOnFailureListener {
+                    cont.resume(null)
+                }
+                addOnCanceledListener {
+                    cont.cancel()
+                }
+            }
         }
     }
 }
 ```
 
-## Scansione QR
-Implementazione della scansionde del qr sull'Image Analysis Analyzer
+## Rest API
 
 ```kotlin
-controller = LifecycleCameraController(this@SecondActivity).apply {
-            setEnabledUseCases(
-                CameraController.IMAGE_CAPTURE or CameraController.IMAGE_ANALYSIS
-            )
-            setImageAnalysisAnalyzer(
-                ContextCompat.getMainExecutor(applicationContext),
-                QrCodeAnalyzer{
-                    viewModel.OnQRanalized0(it)
-                }
+class WeatherRepositoryImpl @Inject constructor(
+    private val api: WeatherAPI
+) : WeatherRepository {
+    override suspend fun getWeatherData(lat: Double, long: Double): Resource<WeatherInfo> {
+        return try {
+            Resource.Success(
+                data = api.getWeatherData(
+                    lat = lat,
+                    long = long
+                ).toWeatherInfo()
             )
         }
+        catch (e : Exception){
+            e.printStackTrace()
+            Resource.Error(e.message ?: "An unknown error occurred")
+        }
+    }
+}
 ```
+
+## ViewModel
+
+```kotlin
+@HiltViewModel
+class WeatherViewModel @Inject constructor(
+    private val repository: WeatherRepository,
+    private var locationTracker: LocationTracker
+) : ViewModel() {
+
+    var state by mutableStateOf(WeatherState())
+        private set
+
+    var lat by mutableStateOf(0.0)
+    var long by mutableStateOf(0.0)
+
+    fun loadWeatherInfo(){
+        viewModelScope.launch {
+            state = state.copy(
+                isLoading = true,
+                error = null
+            )
+            locationTracker.getCurrentLocation()?.let{ location->
+                lat = location.latitude
+                long = location.longitude
+                when(val result = repository.getWeatherData(location.latitude,location.longitude)){
+                    is Resource.Success ->{
+                        state = state.copy(
+                            weatherInfo = result.data,
+                            isLoading = false,
+                            error = null
+                        )
+                    }
+
+                    is Resource.Error ->{
+                        state = state.copy(
+                            weatherInfo = null,
+                            isLoading = false,
+                            error = result.message
+                        )
+                    }
+                }
+            } ?: kotlin.run {
+                state = state.copy(
+                    isLoading = false,
+                    error = "Couldnt retrive location. Make sure to garant permission and enable GPS."
+                )
+            }
+        }
+    }
+
+    private var _temperature = MutableStateFlow(false)
+    var temperature = _temperature
+
+    private var _windSpeed = MutableStateFlow(false)
+    var windSpeed = _windSpeed
+
+    private var _airPressure = MutableStateFlow(false)
+    var airPressure = _airPressure
+
+    fun changeTemp(t : Boolean){
+        _temperature.value = t
+    }
+
+    fun changeSpeed(s: Boolean){
+        _windSpeed.value = s
+    }
+
+    fun changePressure(p : Boolean){
+        _airPressure.value = p
+    }
+
+    fun loadPreferences(sharedPreferences: SharedPreferences) {
+        _temperature.value = sharedPreferences.getBoolean("temp", false)
+        _windSpeed.value = sharedPreferences.getBoolean("windSpeed", false)
+        _airPressure.value = sharedPreferences.getBoolean("pressure", false)
+    }
+
+}
+```
+
 
 </p>
 
