@@ -248,6 +248,378 @@ class WeatherViewModel @Inject constructor(
 }
 ```
 
+## Weather Forecast UI
+
+```kotlin
+@Composable
+fun WeatherForecast(
+        state: WeatherState,
+        modifier: Modifier = Modifier,
+        day: Int,
+        dayName: String,
+        temperature: Boolean
+){
+    state.weatherInfo?.weatherDataPerDay?.get(day)?.let {data ->
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+        ) {
+
+            val finalData: List<WeatherData> = if (day == 0) hoursContinuation(state,data) else data
+
+            Text(
+                text = if (day == 0) stringResource(id = R.string.hours) else dayName.replaceFirstChar { it.uppercaseChar() },
+                fontSize = 20.sp,
+                color= Color.White,
+                style = androidx.compose.ui.text.TextStyle(fontWeight = FontWeight.Bold, shadow = Shadow(
+                    color = Color.Black,
+                    offset = Offset(2f, 2f),
+                    blurRadius = 8f
+                )),
+                modifier = Modifier.padding(start= 16.dp)
+            )
+
+            Box(modifier = Modifier.padding(10.dp,10.dp)){
+                val context = LocalContext.current
+                Box(
+                    modifier = Modifier
+                        .clippedShadow(8.dp, shape = RoundedCornerShape(16.dp))
+                        .padding(10.dp)
+                ) {
+                    LazyRow(content = {
+                        items(finalData) {weatherData ->
+                                HourlyWeatherDisplay(
+                                    weatherData = weatherData,
+                                    modifier = Modifier.fillMaxSize(),
+                                    temperature = temperature
+                                )
+                            Spacer(modifier = Modifier.width(16.dp))
+                        }
+                    })
+                }
+            }
+        }
+    }
+}
+
+fun hoursContinuation(
+    state: WeatherState,
+    data: List<WeatherData>
+) : List<WeatherData>{
+    val tomorrowData = state.weatherInfo?.weatherDataPerDay?.get(1)
+    val data1 = data.toMutableList()
+    val time = LocalDateTime.now()
+
+    for(d in data){
+        if (d.time <= time){
+            data1.remove(d)
+        }
+    }
+
+    for(d in tomorrowData!!){
+        if(data1.size != 23){
+            data1.add(d)
+        }
+        else{
+            break
+        }
+    }
+    return data1.toList()
+}
+```
+
+## Weather Card UI
+
+```kotlin
+@Composable
+fun WeatherCard(
+    state: WeatherState,
+    temperature: Boolean,
+    windSpeed: Boolean,
+    pressure: Boolean
+){
+    state.weatherInfo?.currentWeatherData.let { data ->
+            Box(
+                modifier = Modifier
+                    .clippedShadow(8.dp, shape = RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val today = LocalDate.now().dayOfWeek.getDisplayName(
+                        java.time.format.TextStyle.FULL,
+                        Locale.getDefault()
+                    ).replaceFirstChar { it.uppercaseChar() }
+
+                    if (data != null) {
+                        val temp = if (!temperature) {
+                            "${data.temperatureCelsius}°C"
+                        } else {
+                            "${(data.temperatureCelsius * 9.0 / 5) + 32}°F"
+                        }
+
+                        Text(
+                            text = "$today ${data.time.format(DateTimeFormatter.ofPattern("HH:mm"))}",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            style = TextStyle(
+                                shadow = Shadow(
+                                color = Color.Black,
+                                offset = Offset(2f, 2f),
+                                blurRadius = 4f
+                            )
+                            ),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        val redirectedId = when (data.weatherType.weatherDesc) {
+                            R.string.clear -> R.drawable.ic_moon
+                            R.string.mainlyClear -> R.drawable.ic_clearnight
+                            R.string.partlyCloudy -> R.drawable.ic_partlycloudynight
+                            else -> data.weatherType.iconRes
+                        }
+
+                        val isNight = isNightTime()
+                        val id = if (isNight) redirectedId else data.weatherType.iconRes
+
+                        Image(
+                            painter = painterResource(id = id),
+                            contentDescription = null,
+                            modifier = Modifier.size(120.dp)
+                        )
+
+                        Text(
+                            text = temp,
+                            fontSize = 50.sp,
+                            color = Color.White,
+                            style = TextStyle(
+                                fontWeight = FontWeight.ExtraLight,
+                                shadow = Shadow(
+                                    color = Color.Black,
+                                    offset = Offset(2f, 2f),
+                                    blurRadius = 4f
+                                ),
+                                textAlign = TextAlign.Center
+                            ),
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+
+
+                        Text(
+                            text = stringResource(id = data.weatherType.weatherDesc),
+                            fontSize = 22.sp,
+                            color = Color.White,
+                            style = TextStyle(
+                                shadow = Shadow(
+                                    color = Color.Black,
+                                    offset = Offset(2f, 2f),
+                                    blurRadius = 4f
+                                ),
+                                textAlign = TextAlign.Center
+                            ),
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(11.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .clippedShadow(8.dp, RoundedCornerShape(25.dp))
+                                .fillMaxWidth()
+                                .padding(5.dp),
+                            horizontalArrangement = Arrangement.SpaceAround
+                        ) {
+                            WeatherDataDisplay(
+                                value = if (!pressure) data.pressure.roundToInt() else (data.pressure / 33.8639).roundToInt(),
+                                unit = if (!pressure) "hPa" else "inHg",
+                                icon = ImageVector.vectorResource(id = R.drawable.ic_pressure),
+                                iconTint = Color.White,
+                                textStyle = TextStyle(color = Color.White)
+                            )
+
+                            WeatherDataDisplay(
+                                value = data.humidity.roundToInt(),
+                                unit = "%",
+                                icon = ImageVector.vectorResource(id = R.drawable.ic_drop),
+                                iconTint = Color.White,
+                                textStyle = TextStyle(color = Color.White)
+                            )
+
+                            WeatherDataDisplay(
+                                value = if (!windSpeed) data.windSpeed.roundToInt() else (data.windSpeed * 0.621371).roundToInt(),
+                                unit = if (!windSpeed) "km/h" else "mph",
+                                icon = ImageVector.vectorResource(id = R.drawable.ic_wind),
+                                iconTint = Color.White,
+                                textStyle = TextStyle(color = Color.White)
+                            )
+                        }
+                    }
+                }
+            }
+    }
+
+}
+
+fun isNightTime(): Boolean {
+    val now = LocalTime.now()
+    val start = LocalTime.of(18, 0)
+    val end = LocalTime.of(6, 0)
+
+    return now.isAfter(start) || now.isBefore(end)
+}
+```
+
+## Temperature Chart
+
+```kotlin
+@Composable
+fun temperatureChart(
+    state: WeatherState,
+    temperature: Boolean,
+    day: Int
+){
+
+    val todayData = state.weatherInfo?.weatherDataPerDay?.get(day)
+    val todayTemperature = if(todayData != null) getTemperature(todayData,temperature) else null
+
+    if (todayTemperature != null){
+
+        val minTemperature = todayTemperature.minOf { it.y }
+        val maxTemperature = todayTemperature.maxOf { it.y }
+
+        val t = if(!temperature) "°C" else "°F"
+
+        val xAxisData = AxisData.Builder()
+            .axisStepSize(100.dp)
+            .steps(todayTemperature.size -1)
+            .labelData { i ->
+               if(i == 0){
+                   "             0$i:00"
+               }else{
+                   if(i<10) "0$i:00" else "$i:00"
+               }
+            }
+            .labelAndAxisLinePadding(15.dp)
+            .axisLineColor(Color.White)
+            .axisLabelColor(Color.White)
+            .build()
+
+        val yAxisData = AxisData.Builder()
+            .steps(5)
+            .labelAndAxisLinePadding(20.dp)
+            .labelData { i ->
+                val scale = (maxTemperature - minTemperature) / 5
+                val value = minTemperature + i * scale
+                value.toInt().toString() + t
+            }
+            .axisLineColor(Color.White)
+            .axisLabelColor(Color.White)
+            .backgroundColor(Color.DarkGray)
+            .build()
+
+        val lineChartData = LineChartData(
+            linePlotData = LinePlotData(
+                lines = listOf(
+                    Line(
+                        dataPoints = todayTemperature,
+                        LineStyle(
+                            color = Color.White,
+                            lineType = LineType.Straight(true)
+                        ),
+                        IntersectionPoint(
+                            color = Color.LightGray
+                        ),
+                        SelectionHighlightPoint(
+                            color = Color.White
+                        ),
+                        ShadowUnderLine(
+                            alpha = 0.5f,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White,
+                                    Color.Transparent
+                                )
+                            )
+                        ),
+                        SelectionHighlightPopUp(
+                            popUpLabel = { x: Float, y: Float ->
+                                "Temp: $y$t"
+                            }
+                        )
+                    )
+                ),
+                plotType = PlotType.Line
+            ),
+            xAxisData = xAxisData,
+            yAxisData = yAxisData,
+            gridLines = null,
+            isZoomAllowed = false,
+            backgroundColor = Color.DarkGray,
+            paddingRight = 0.dp,
+        )
+
+        Box(
+            modifier = Modifier.padding(10.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.DarkGray)
+            ) {
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = if(day == 0) stringResource(id = R.string.todayTempChart) else stringResource(
+                        id = R.string.temperatureChart
+                    ),
+                    fontSize = 20.sp,
+                    color= Color.White,
+                    style = androidx.compose.ui.text.TextStyle(fontWeight = FontWeight.Bold)
+                )
+
+                LineChart(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(250.dp),
+                    lineChartData = lineChartData,
+                )
+            }
+        }
+    }
+
+
+}
+
+fun getTemperature(data: List<WeatherData>, temperature: Boolean) : List<co.yml.charts.common.model.Point> {
+
+    val list : ArrayList<co.yml.charts.common.model.Point> = ArrayList()
+
+    for(i in data){
+        val xTime = i.time.hour.toFloat()
+        val yTemperature = if(!temperature){
+            i.temperatureCelsius.toFloat()
+        }else{
+            i.temperatureCelsius.toFahrenheit().toFloat()
+        }
+        list.add(co.yml.charts.common.model.Point(xTime,yTemperature))
+    }
+
+    return list.toList()
+
+}
+
+private fun Double.toFahrenheit() : Double{
+    return (this * 9.0/5) + 32
+}
+```
 
 </p>
 
